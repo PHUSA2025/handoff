@@ -5,11 +5,22 @@ module.exports = (app) => {
     const user = body.user_name;
 
     try {
-      const list = await client.lists.items.list({
-        list_id: 'F09LRJTVD3Q', // ← înlocuiește cu ID-ul listei PHUSA din Slack
+      // test: check if lists API works
+      const test = await client.apiCall('lists.items.list', {
+        list_id: 'F09LRJTVD3Q'
       });
 
-      const active = list.items.filter(item =>
+      if (!test || !test.items) {
+        await client.chat.postMessage({
+          channel: '#handoff',
+          text: `⚠️ Hey ${user}, I can't access the PHUSA project list right now. 
+Lists API might not be enabled in this workspace, or list_id is invalid.`,
+        });
+        return;
+      }
+
+      // (if someday Lists API works, this section will execute)
+      const active = test.items.filter(item =>
         item.fields.STATUS !== 'COMPLETED' &&
         (item.fields.ASSIGNEE === 'Jean Carlos' ||
          item.fields.NOTES?.includes('@Jean Carlos'))
@@ -29,14 +40,11 @@ module.exports = (app) => {
 
       await client.chat.postMessage({
         channel: '#handoff',
-        text: `Handoff summary by ${user}`,
+        text: `✅ Handoff summary by ${user}`,
         blocks: [
           {
             type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `:arrow_right: *PHUSA HANDOFF SUMMARY*\n_Triggered by ${user}_\n\n${summary}`
-            }
+            text: { type: 'mrkdwn', text: `:arrow_right: *PHUSA HANDOFF SUMMARY*\n_Triggered by ${user}_\n\n${summary}` }
           }
         ]
       });
@@ -45,7 +53,7 @@ module.exports = (app) => {
       console.error(error);
       await client.chat.postMessage({
         channel: '#handoff',
-        text: `⚠️ Error generating handoff summary: ${error.message}`,
+        text: `⚠️ Error: ${error.message}`,
       });
     }
   });
