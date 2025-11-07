@@ -1,6 +1,5 @@
-// PHUSA Smart Handoff – 36h Summary
-// Command: /handoff
-// Author: Daniela & Ștefan
+// PHUSA Smart Handoff (Auto from Slack List)
+// Author: Daniela & Ștefan – 2025-11-07
 
 const fetch = (...args) =>
   import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -10,91 +9,109 @@ module.exports = (app) => {
     await ack();
 
     const user = body.user_name;
-    const listLink = 'https://printhouseusa.slack.com/lists/T07EG07KE7P/F09LRJTVD3Q?view_id=View09LM99CAAF';
-    const toEmail = 'sales@printhouseusa.com';
-    const timeWindowHours = 36;
+    const toEmail = "sales@printhouseusa.com";
+    const listToken = process.env.SLACK_SESSION_TOKEN;
+    const listId = "F09LRJTVD3Q";
+    const viewId = "View09LM99CAAF";
+    const hoursWindow = 36;
 
     try {
-      // 🔹 Fetch your list data via Slack Lists API (or local cache)
-      // In real implementation, replace with Slack internal fetch / cached data
-      // Simulated local data for demo purpose
-      const projects = [
-        {
-          job: '28046',
-          assignee: 'Jean Carlos',
-          status: 'Printing Started',
-          comment: '',
-          handoffDate: '2025-11-07T08:30:00Z',
+      // 1️⃣ Fetch list content directly from Slack internal API
+      const response = await fetch("https://slack.com/api/lists.listViewRead", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Cookie": `d=${listToken}`,
         },
-        {
-          job: '28047',
-          assignee: 'Daniela',
-          status: 'Design Approved',
-          comment: 'Added a new comment about client approval',
-          handoffDate: '2025-11-06T20:15:00Z',
-        },
-      ];
+        body: new URLSearchParams({
+          token: listToken,
+          list_id: listId,
+          view_id: viewId,
+        }),
+      });
 
-      // 🔹 Filter projects modified in the last 36 hours
-      const now = Date.now();
-      const cutoff = now - timeWindowHours * 60 * 60 * 1000;
+      const data = await response.json();
 
-      const recent = projects.filter(p => new Date(p.handoffDate).getTime() >= cutoff);
-
-      if (recent.length === 0) {
+      if (!data.ok || !data.items) {
         await client.chat.postMessage({
-          channel: '#handoff',
-          text: `✅ ${user}, there are no project updates in the last ${timeWindowHours} hours.`,
+          channel: "#handoff",
+          text: `⚠️ ${user}, I couldn't access the project list. Slack returned: ${data.error || "unknown error"}`,
         });
         return;
       }
 
-      // 🔹 Format the handoff summary
+      // 2️⃣ Extract relevant fields
+      const items = data.items.map(i => {
+        const fields = i.fields || {};
+        return {
+          job: fields["Job #"]?.value_text || "N/A",
+          assignee: fields["Assignee"]?.value_text || "Unassigned",
+          status: fields["Status"]?.value_text || "N/A",
+          comments: fields["Notes"]?.value_text || "",
+          handoffDate: fields["Handoff Date"]?.value_date || null,
+        };
+      });
+
+      // 3️⃣ Filter items modified in last 36h
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - hoursWindow * 60 * 60 * 1000);
+      const recent = items.filter(p => p.handoffDate && new Date(p.handoffDate) >= cutoff);
+
+      if (recent.length === 0) {
+        await client.chat.postMessage({
+          channel: "#handoff",
+          text: `✅ ${user}, there are no handoff updates in the last ${hoursWindow} hours.`,
+        });
+        return;
+      }
+
+      // 4️⃣ Build summary text
       const summary = recent.map(p => {
-        if (p.comment && p.comment.trim() !== '') {
-          return `• Job #${p.job} – Assignee: ${p.assignee} → ${p.comment}`;
+        if (p.comments && p.comments.trim() !== "") {
+          return `• Job #${p.job} – Assignee: ${p.assignee} → ${p.comments}`;
+        } else {
+          return `• Job #${p.job} – Assignee: ${p.assignee} → Status changed to “${p.status}”`;
         }
-        return `• Job #${p.job} – Assignee: ${p.assignee} → Status changed to “${p.status}”`;
-      }).join('\n');
+      }).join("\n");
 
-      // 🔹 Email subject and body
-      const subject = encodeURIComponent('PHUSA Handoff – Updated Projects (Last 36h)');
+      // 5️⃣ Prepare Outlook mail
+      const subject = encodeURIComponent("PHUSA Handoff – Updated Projects (Last 36h)");
       const body = encodeURIComponent(
-        `Hello team,\n\nHere are the latest project updates from the last ${timeWindowHours} hours:\n\n${summary}\n\nView the full list here:\n${listLink}\n\nKind regards,\n${user}`
+        `Hello team,\n\nHere are the project updates from the last ${hoursWindow} hours:\n\n${summary}\n\nView the full list here:\nhttps://printhouseusa.slack.com/lists/T07EG07KE7P/F09LRJTVD3Q?view_id=View09LM99CAAF\n\nKind regards,\n${user}`
       );
-
       const mailto = `mailto:${toEmail}?subject=${subject}&body=${body}`;
 
-      // 🔹 Post message to Slack
+      // 6️⃣ Post confirmation to Slack
       await client.chat.postMessage({
-        channel: '#handoff',
-        text: `✅ Handoff summary ready for email.`,
+        channel: "#handoff",
+        text: `✅ Handoff summary ready!`,
         blocks: [
           {
-            type: 'section',
+            type: "section",
             text: {
-              type: 'mrkdwn',
-              text: `📋 *Handoff Summary (Last ${timeWindowHours}h)*\n_Triggered by ${user}_\n\n${summary}`,
+              type: "mrkdwn",
+              text: `📋 *Handoff Summary (Last ${hoursWindow}h)*\n_Triggered by ${user}_\n\n${summary}`,
             },
           },
           {
-            type: 'actions',
+            type: "actions",
             elements: [
               {
-                type: 'button',
-                text: { type: 'plain_text', text: 'Open in Outlook ✉️' },
+                type: "button",
+                text: { type: "plain_text", text: "Open in Outlook ✉️" },
                 url: mailto,
-                style: 'primary',
+                style: "primary",
               },
             ],
           },
         ],
       });
-    } catch (error) {
-      console.error('Error during handoff:', error);
+
+    } catch (err) {
+      console.error("Error:", err);
       await client.chat.postMessage({
-        channel: '#handoff',
-        text: `⚠️ ${user}, something went wrong while processing the handoff: ${error.message}`,
+        channel: "#handoff",
+        text: `⚠️ ${user}, an error occurred: ${err.message}`,
       });
     }
   });
