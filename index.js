@@ -1,16 +1,23 @@
-require('dotenv').config();
-const { App } = require('@slack/bolt');
-const handoffCommand = require('./handoff');
+// PHUSA Handoff Bot – Index
+// Loads Bolt app and mounts the handoff command
 
+const { App } = require("@slack/bolt");
+const handoff = require("./handoff");
+
+// 🔹 Initialize Slack Bolt app
 const app = new App({
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
   token: process.env.SLACK_BOT_TOKEN,
-  endpoints: '/slack/events',
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  socketMode: false,
+  appToken: process.env.SLACK_APP_TOKEN, // optional, if used
+  port: process.env.PORT || 3000,
 });
 
-handoffCommand(app);
+// 🔹 Load the /handoff command
+handoff(app);
 
+// 🔹 Start server
 (async () => {
-  await app.start(process.env.PORT || 3000);
-  console.log('⚡️ PHUSA Handoff bot is running!');
+  await app.start();
+  console.log("⚡️ PHUSA Handoff bot is running!");
 })();
