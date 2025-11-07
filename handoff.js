@@ -1,73 +1,72 @@
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const { parse } = require('csv-parse/sync');
+const fs = require('fs');
+const https = require('https');
 
 module.exports = (app) => {
+  // 1️⃣ Comanda /handoff
   app.command('/handoff', async ({ ack, body, client }) => {
     await ack();
     const user = body.user_name;
-    const listUrl = "https://printhouseusa.slack.com/api/lists.listView";
-    const session = process.env.SLACK_SESSION_TOKEN;
 
-
-    try {
-      // 1️⃣ Cere conținutul listei direct din Slack (API intern)
-      const response = await fetch(listUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cookie": `d=${session}`,
+    await client.chat.postMessage({
+      channel: '#handoff',
+      text: `Hey ${user}, click below to export the latest PHUSA Projects list 👇`,
+      blocks: [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: `*📤 Generate live CSV export from PHUSA Projects*` },
+          accessory: {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Export CSV', emoji: true },
+            action_id: 'export_csv',
+          },
         },
-        body: new URLSearchParams({
-          token: session,
-          list_id: "F09LRJTVD3Q",
-          view_id: "View09LM99CAAF",
-        }),
-      });
+      ],
+    });
+  });
 
-      const data = await response.json();
+  // 2️⃣ Evenimentul de apăsare a butonului
+  app.action('export_csv', async ({ ack, body, client }) => {
+    await ack();
 
-      if (!data.ok || !data.list) {
-        await client.chat.postMessage({
-          channel: "#handoff",
-          text: `⚠️ ${user}, I couldn't access the list. Slack returned: ${data.error || "unknown error"}`,
-        });
-        return;
-      }
+    await client.chat.postMessage({
+      channel: '#handoff',
+      text: `📦 ${body.user.name} triggered CSV export. Waiting for workflow to upload the file...`,
+    });
+  });
 
-      // 2️⃣ Extragem coloanele utile (Job, Status, Assignee, Notes)
-      const items = data.list.rows.map((row) => {
-        const fields = row.cells.map((c) => c.value.text || "").filter(Boolean);
-        return {
-          job: fields[0] || "—",
-          status: fields[1] || "—",
-          assignee: fields[2] || "—",
-          notes: fields[3] || "—",
-        };
-      });
+  // 3️⃣ Când workflow-ul Slack încarcă fișierul CSV în canal
+  app.event('file_shared', async ({ event, client }) => {
+    try {
+      const file = await client.files.info({ file: event.file_id });
+      if (!file || !file.file || !file.file.name.endsWith('.csv')) return;
 
-      // 3️⃣ Filtrăm doar proiectele active
-      const active = items.filter(
-        (p) => !["COMPLETED", "DELIVERED", "PAID"].includes(p.status.toUpperCase())
+      const url = file.file.url_private_download;
+      const csvData = await downloadFile(url, process.env.SLACK_BOT_TOKEN);
+
+      const records = parse(csvData, { columns: true, skip_empty_lines: true });
+
+      const active = records.filter(
+        (r) => !['COMPLETED', 'DELIVERED', 'PAID'].includes((r.STATUS || '').toUpperCase())
       );
 
-      // 4️⃣ Construim mesajul
       const summary = active
         .slice(0, 15)
         .map(
-          (p) =>
-            `• *${p.job}* — ${p.status}\n   ${p.notes || "_no notes_"} → *${p.assignee}*`
+          (r) =>
+            `• *${r['JOB #'] || r.Job || '-'}* — ${r.STATUS || '-'}\n   ${r['Manufacture Notes'] || r.Notes || '_no notes_'} → *${r.ASSIGNEE || r.Assignee || '-'}*`
         )
-        .join("\n\n");
+        .join('\n\n');
 
-      // 5️⃣ Trimitem mesajul în canalul #handoff
       await client.chat.postMessage({
-        channel: "#handoff",
-        text: `✅ Live handoff summary by ${user}`,
+        channel: '#handoff',
+        text: '✅ PHUSA Handoff Summary',
         blocks: [
           {
-            type: "section",
+            type: 'section',
             text: {
-              type: "mrkdwn",
-              text: `:arrow_right: *PHUSA HANDOFF SUMMARY*\n_Triggered by ${user}_\n\n${summary}`,
+              type: 'mrkdwn',
+              text: `:arrow_right: *PHUSA HANDOFF SUMMARY*\n_Based on the latest CSV uploaded_\n\n${summary}`,
             },
           },
         ],
@@ -75,9 +74,21 @@ module.exports = (app) => {
     } catch (error) {
       console.error(error);
       await client.chat.postMessage({
-        channel: "#handoff",
-        text: `⚠️ Error reading Slack list: ${error.message}`,
+        channel: '#handoff',
+        text: `⚠️ Error processing CSV: ${error.message}`,
       });
     }
   });
 };
+
+// utilitar pentru descărcare CSV
+function downloadFile(url, token) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { Authorization: `Bearer ${token}` } }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+  });
+}
