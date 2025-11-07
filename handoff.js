@@ -1,14 +1,12 @@
-import fetch from "node-fetch";
-import fs from "fs";
-import { parse } from "csv-parse/sync";
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 module.exports = (app) => {
-  app.command("/handoff", async ({ ack, body, client }) => {
+  app.command('/handoff', async ({ ack, body, client }) => {
     await ack();
-
     const user = body.user_name;
     const listUrl = "https://printhouseusa.slack.com/api/lists.listView";
     const session = process.env.SLACK_SESSION_TOKEN;
+
 
     try {
       // 1️⃣ Cere conținutul listei direct din Slack (API intern)
