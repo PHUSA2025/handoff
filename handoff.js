@@ -6,7 +6,7 @@ module.exports = (app) => {
 
     try {
       const list = await client.lists.items.list({
-        list_id: 'LXXXXXXXXXX', // ← înlocuiește cu ID-ul listei PHUSA din Slack
+        list_id: 'F09LRJTVD3Q', // ← înlocuiește cu ID-ul listei PHUSA din Slack
       });
 
       const active = list.items.filter(item =>
