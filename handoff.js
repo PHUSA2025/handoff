@@ -2,18 +2,18 @@
 const { App } = require("@slack/bolt");
 const axios = require("axios");
 
-// Load environment variables from Render
+// ------------------ Slack app setup ------------------
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
 });
 
-// Airtable config
+// ------------------ Airtable config ------------------
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-const AIRTABLE_TABLE = "Daily Handoff";
+const AIRTABLE_TABLE = "Daily Handoff"; // exact cum apare în Airtable
 
-// ---------- SLASH COMMAND: /handoff ----------
+// ------------------ Slash command: /handoff ------------------
 app.command("/handoff", async ({ ack, body, client }) => {
   await ack();
 
@@ -29,23 +29,34 @@ app.command("/handoff", async ({ ack, body, client }) => {
         blocks: [
           {
             type: "input",
-            block_id: "job_number",
+            block_id: "job_name",
             element: {
               type: "plain_text_input",
-              action_id: "job_number_input",
-              placeholder: { type: "plain_text", text: "e.g. 28479" },
+              action_id: "job_name_input",
+              placeholder: { type: "plain_text", text: "e.g. Box Showstopper" },
             },
-            label: { type: "plain_text", text: "Job #" },
+            label: { type: "plain_text", text: "Project / Job Name" },
           },
           {
             type: "input",
-            block_id: "client_name",
+            block_id: "notes",
             element: {
               type: "plain_text_input",
-              action_id: "client_name_input",
-              placeholder: { type: "plain_text", text: "e.g. The Real Autograph" },
+              multiline: true,
+              action_id: "notes_input",
+              placeholder: { type: "plain_text", text: "Short update or comment" },
             },
-            label: { type: "plain_text", text: "Client Name" },
+            label: { type: "plain_text", text: "Notes" },
+          },
+          {
+            type: "input",
+            block_id: "assignee",
+            element: {
+              type: "plain_text_input",
+              action_id: "assignee_input",
+              placeholder: { type: "plain_text", text: "e.g. Daniela, Jean Carlos" },
+            },
+            label: { type: "plain_text", text: "Assignee" },
           },
           {
             type: "input",
@@ -55,10 +66,10 @@ app.command("/handoff", async ({ ack, body, client }) => {
               action_id: "status_select",
               placeholder: { type: "plain_text", text: "Select status" },
               options: [
-                { text: { type: "plain_text", text: "Waiting Client" }, value: "WAITING CLIENT" },
-                { text: { type: "plain_text", text: "Need Proof" }, value: "NEED PROOF" },
-                { text: { type: "plain_text", text: "Completed" }, value: "COMPLETED" },
-                { text: { type: "plain_text", text: "To Send to Production" }, value: "TO SEND TO PRODUCTION" },
+                { text: { type: "plain_text", text: "Waiting Client" }, value: "Waiting Client" },
+                { text: { type: "plain_text", text: "Need Proof" }, value: "Need Proof" },
+                { text: { type: "plain_text", text: "Completed" }, value: "Completed" },
+                { text: { type: "plain_text", text: "To Send to Production" }, value: "To Send to Production" },
               ],
             },
             label: { type: "plain_text", text: "Status" },
@@ -71,26 +82,28 @@ app.command("/handoff", async ({ ack, body, client }) => {
   }
 });
 
-// ---------- HANDLE FORM SUBMISSION ----------
+// ------------------ Handle submission ------------------
 app.view("handoff_submission", async ({ ack, body, view, client }) => {
   await ack();
 
   const user = body.user.name;
-  const jobNumber = view.state.values.job_number.job_number_input.value;
-  const clientName = view.state.values.client_name.client_name_input.value;
+  const jobName = view.state.values.job_name.job_name_input.value;
+  const notes = view.state.values.notes.notes_input.value;
+  const assignee = view.state.values.assignee.assignee_input.value;
   const status = view.state.values.status.status_select.selected_option.value;
 
   const record = {
     fields: {
-      "JOB #": jobNumber,
-      "Client": clientName,
-      "STATUS": status,
-      "Date": new Date().toISOString(),
-      "Submitted By": user,
+      "Name": jobName,
+      "Notes": notes,
+      "Assignee": assignee,
+      "Status": status,
     },
   };
 
   try {
+    console.log("📤 Sending record to Airtable:", record);
+
     await axios.post(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE)}`,
       { records: [record] },
@@ -104,18 +117,18 @@ app.view("handoff_submission", async ({ ack, body, view, client }) => {
 
     await client.chat.postMessage({
       channel: body.user.id,
-      text: `✅ *${user}*, your update for job *${jobNumber}* (${clientName} – ${status}) was recorded successfully.`,
+      text: `✅ *${user}*, your update for *${jobName}* has been added to Daily Handoff.\n_Status: ${status}_`,
     });
   } catch (error) {
-    console.error("Error saving to Airtable:", error);
+    console.error("❌ Error saving to Airtable:", error.response?.data || error.message);
     await client.chat.postMessage({
       channel: body.user.id,
-      text: `⚠️ Sorry ${user}, I couldn't save your handoff. Please try again later.`,
+      text: `⚠️ Sorry ${user}, something went wrong while saving to Airtable.`,
     });
   }
 });
 
-// ---------- START APP ----------
+// ------------------ Start app ------------------
 (async () => {
   await app.start(process.env.PORT || 3000);
   console.log("⚡️ PHUSA Daily Handoff bot is running!");
