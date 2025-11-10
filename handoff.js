@@ -1,118 +1,122 @@
-// PHUSA Smart Handoff (Auto from Slack List)
-// Author: Daniela & Ștefan – 2025-11-07
+// handoff.js
+const { App } = require("@slack/bolt");
+const axios = require("axios");
 
-const fetch = (...args) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(...args));
+// Load environment variables from Render
+const app = new App({
+  token: process.env.SLACK_BOT_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+});
 
-module.exports = (app) => {
-  app.command('/handoff', async ({ ack, body, client }) => {
-    await ack();
+// Airtable config
+const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+const AIRTABLE_TABLE = "Daily Handoff";
 
-    const user = body.user_name;
-    const toEmail = "sales@printhouseusa.com";
-    const listToken = process.env.SLACK_SESSION_TOKEN;
-    const listId = "F09LRJTVD3Q";
-    const viewId = "View09LM99CAAF";
-    const hoursWindow = 36;
+// ---------- SLASH COMMAND: /handoff ----------
+app.command("/handoff", async ({ ack, body, client }) => {
+  await ack();
 
-    try {
-      // 1️⃣ Fetch list content directly from Slack internal API
-      const response = await fetch("https://slack.com/api/lists.listViewRead", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cookie": `d=${listToken}`,
-        },
-        body: new URLSearchParams({
-          token: listToken,
-          list_id: listId,
-          view_id: viewId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!data.ok || !data.items) {
-        await client.chat.postMessage({
-          channel: "#handoff",
-          text: `⚠️ ${user}, I couldn't access the project list. Slack returned: ${data.error || "unknown error"}`,
-        });
-        return;
-      }
-
-      // 2️⃣ Extract relevant fields
-      const items = data.items.map(i => {
-        const fields = i.fields || {};
-        return {
-          job: fields["Job #"]?.value_text || "N/A",
-          assignee: fields["Assignee"]?.value_text || "Unassigned",
-          status: fields["Status"]?.value_text || "N/A",
-          comments: fields["Notes"]?.value_text || "",
-          handoffDate: fields["Handoff Date"]?.value_date || null,
-        };
-      });
-
-      // 3️⃣ Filter items modified in last 36h
-      const now = new Date();
-      const cutoff = new Date(now.getTime() - hoursWindow * 60 * 60 * 1000);
-      const recent = items.filter(p => p.handoffDate && new Date(p.handoffDate) >= cutoff);
-
-      if (recent.length === 0) {
-        await client.chat.postMessage({
-          channel: "#handoff",
-          text: `✅ ${user}, there are no handoff updates in the last ${hoursWindow} hours.`,
-        });
-        return;
-      }
-
-      // 4️⃣ Build summary text
-      const summary = recent.map(p => {
-        if (p.comments && p.comments.trim() !== "") {
-          return `• Job #${p.job} – Assignee: ${p.assignee} → ${p.comments}`;
-        } else {
-          return `• Job #${p.job} – Assignee: ${p.assignee} → Status changed to “${p.status}”`;
-        }
-      }).join("\n");
-
-      // 5️⃣ Prepare Outlook mail
-      const subject = encodeURIComponent("PHUSA Handoff – Updated Projects (Last 36h)");
-      const body = encodeURIComponent(
-        `Hello team,\n\nHere are the project updates from the last ${hoursWindow} hours:\n\n${summary}\n\nView the full list here:\nhttps://printhouseusa.slack.com/lists/T07EG07KE7P/F09LRJTVD3Q?view_id=View09LM99CAAF\n\nKind regards,\n${user}`
-      );
-      const mailto = `mailto:${toEmail}?subject=${subject}&body=${body}`;
-
-      // 6️⃣ Post confirmation to Slack
-      await client.chat.postMessage({
-        channel: "#handoff",
-        text: `✅ Handoff summary ready!`,
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: {
+        type: "modal",
+        callback_id: "handoff_submission",
+        title: { type: "plain_text", text: "Daily Handoff" },
+        submit: { type: "plain_text", text: "Submit" },
+        close: { type: "plain_text", text: "Cancel" },
         blocks: [
           {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `📋 *Handoff Summary (Last ${hoursWindow}h)*\n_Triggered by ${user}_\n\n${summary}`,
+            type: "input",
+            block_id: "job_number",
+            element: {
+              type: "plain_text_input",
+              action_id: "job_number_input",
+              placeholder: { type: "plain_text", text: "e.g. 28479" },
             },
+            label: { type: "plain_text", text: "Job #" },
           },
           {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: { type: "plain_text", text: "Open in Outlook ✉️" },
-                url: mailto,
-                style: "primary",
-              },
-            ],
+            type: "input",
+            block_id: "client_name",
+            element: {
+              type: "plain_text_input",
+              action_id: "client_name_input",
+              placeholder: { type: "plain_text", text: "e.g. The Real Autograph" },
+            },
+            label: { type: "plain_text", text: "Client Name" },
+          },
+          {
+            type: "input",
+            block_id: "status",
+            element: {
+              type: "static_select",
+              action_id: "status_select",
+              placeholder: { type: "plain_text", text: "Select status" },
+              options: [
+                { text: { type: "plain_text", text: "Waiting Client" }, value: "WAITING CLIENT" },
+                { text: { type: "plain_text", text: "Need Proof" }, value: "NEED PROOF" },
+                { text: { type: "plain_text", text: "Completed" }, value: "COMPLETED" },
+                { text: { type: "plain_text", text: "To Send to Production" }, value: "TO SEND TO PRODUCTION" },
+              ],
+            },
+            label: { type: "plain_text", text: "Status" },
           },
         ],
-      });
+      },
+    });
+  } catch (error) {
+    console.error("Error opening modal:", error);
+  }
+});
 
-    } catch (err) {
-      console.error("Error:", err);
-      await client.chat.postMessage({
-        channel: "#handoff",
-        text: `⚠️ ${user}, an error occurred: ${err.message}`,
-      });
-    }
-  });
-};
+// ---------- HANDLE FORM SUBMISSION ----------
+app.view("handoff_submission", async ({ ack, body, view, client }) => {
+  await ack();
+
+  const user = body.user.name;
+  const jobNumber = view.state.values.job_number.job_number_input.value;
+  const clientName = view.state.values.client_name.client_name_input.value;
+  const status = view.state.values.status.status_select.selected_option.value;
+
+  const record = {
+    fields: {
+      "JOB #": jobNumber,
+      "Client": clientName,
+      "STATUS": status,
+      "Date": new Date().toISOString(),
+      "Submitted By": user,
+    },
+  };
+
+  try {
+    await axios.post(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE)}`,
+      { records: [record] },
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `✅ *${user}*, your update for job *${jobNumber}* (${clientName} – ${status}) was recorded successfully.`,
+    });
+  } catch (error) {
+    console.error("Error saving to Airtable:", error);
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `⚠️ Sorry ${user}, I couldn't save your handoff. Please try again later.`,
+    });
+  }
+});
+
+// ---------- START APP ----------
+(async () => {
+  await app.start(process.env.PORT || 3000);
+  console.log("⚡️ PHUSA Daily Handoff bot is running!");
+})();
