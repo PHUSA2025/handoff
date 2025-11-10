@@ -1,12 +1,13 @@
 {
   "name": "phusa-handoff",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@slack/bolt": "^3.17.0",
-    "node-fetch": "^3.3.2"
+    "@slack/bolt": "^3.18.0",
+    "axios": "^1.6.7",
+    "dotenv": "^16.4.1"
   }
 }
