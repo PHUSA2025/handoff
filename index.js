@@ -1,23 +1,23 @@
-// PHUSA Handoff Bot – Index
-// Loads Bolt app and mounts the handoff command
+// index.js
+// PHUSA Daily Handoff – main entry point
+// Initializes the Slack Bolt app and loads the Handoff logic
 
 const { App } = require("@slack/bolt");
 const handoff = require("./handoff");
 
-// 🔹 Initialize Slack Bolt app
+// Initialize Slack app
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
   socketMode: false,
-  appToken: process.env.SLACK_APP_TOKEN, // optional, if used
   port: process.env.PORT || 3000,
 });
 
-// 🔹 Load the /handoff command
+// Load Handoff module
 handoff(app);
 
-// 🔹 Start server
+// Start server
 (async () => {
   await app.start();
-  console.log("⚡️ PHUSA Handoff bot is running!");
+  console.log("⚡️ PHUSA Daily Handoff bot is running and connected to Slack!");
 })();
